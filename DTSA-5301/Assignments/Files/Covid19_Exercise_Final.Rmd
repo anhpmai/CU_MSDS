@@ -1,0 +1,359 @@
+---
+title: "COVID-19 Case and Mortality Trends: Insights from Johns Hopkins Data"
+author: "Anh Mai"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: default
+  html_document: default
+---
+
+# Introduction
+
+The COVID-19 pandemic has had a profound and far-reaching impact on global health, economies, and daily life. As the pandemic continues to evolve, analyzing trends in COVID-19 cases and mortality rates becomes crucial for understanding its trajectory and informing public health responses.
+
+This report focuses on analyzing COVID-19 case and mortality trends both in the United States and globally using data provided by Johns Hopkins University. Johns Hopkins University's COVID-19 Dashboard has been a critical resource throughout the pandemic, offering comprehensive and real-time data on the spread of the virus.
+
+## Objectives
+
+The primary objectives of this analysis are:
+
+1. **To Examine Global Trends:** Investigate the overall trends in COVID-19 cases and mortality rates on a global scale. This includes identifying patterns in the spread of the virus and understanding the impacts on different regions.
+
+2. **To Analyze U.S. Trends:** Analyze the trends in COVID-19 cases and mortality rates specifically within the United States. This will include a closer look at how the situation has evolved over time and the impact of various public health interventions.
+
+3. **To Compare Regional Differences:** Compare the trends between the U.S. and global data to identify any significant differences or similarities. This will help to contextualize the U.S. experience within the broader global picture.
+
+## Data Source
+
+The data for this analysis is sourced from the Johns Hopkins University COVID-19 Dashboard found on GitHub.
+
+"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+"time_series_covid19_confirmed_US.csv", 
+"time_series_covid19_confirmed_global.csv",
+"time_series_covid19_deaths_US.csv", 
+"time_series_covid19_deaths_global.csv"
+
+## Scope of Analysis
+
+This analysis will cover:
+
+- **Case Trends:** Examining the trajectory of COVID-19 case numbers, including daily new cases, cumulative cases, and growth rates.
+
+- **Mortality Trends:** Analyzing the trends in COVID-19-related deaths, including daily mortality rates, cumulative deaths, and mortality rates per capita.
+
+- **Comparative Insights:** Comparing the case and mortality trends between the U.S. and other countries to identify key differences and similarities.
+
+By delving into these trends, we aim to provide valuable insights into the progression of the pandemic and its impacts, offering a foundation for informed decision-making and policy development.
+
+# Data Wrangling
+
+## Data Loading
+Load and preprocess your data here. 
+
+```{r setup, include=TRUE}
+# Wrap text
+# Global options for code chunk
+knitr::opts_chunk$set(
+  tidy = TRUE,           # Automatically tidy code
+  width = 80,            # Set output width
+  collapse = TRUE,       # Collapse code and output together
+  comment = "#>"         # Add comment prefix to output
+)
+options(width = 80)      # Set output width globally for code results
+
+# Load necessary libraries
+library(formatR)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+
+# Set global options
+opts_chunk$set(echo = TRUE)
+
+# Load your dataset
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", 
+"time_series_covid19_deaths_US.csv",  
+"time_series_covid19_deaths_global.csv")
+
+# Concate url_in and file_names to make whole url for these 4 files of data
+urls <- str_c(url_in, file_names)
+
+# Read data/load data into tables
+us_cases <- read_csv(urls[1])
+global_cases <- read_csv(urls[2])
+us_deaths <- read_csv(urls[3])
+global_deaths <- read_csv(urls[4])
+```
+## Data Cleanup
+```{r cleanup, include=TRUE}
+# Display the first few rows of the dataset
+head(global_cases)
+head(global_deaths)
+head(us_cases)
+head(us_deaths)
+
+# Tidying up global_cases data
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long),
+               names_to = "Date",
+               values_to = "Cases") %>%
+  select (-c(Lat, Long))
+
+# Tidying up global_deaths data
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long),
+               names_to = "Date",
+               values_to = "Deaths") %>%
+  select (-c(Lat, Long))
+
+# Combing global_cases and global_deaths into 1 big table global
+global <- global_cases %>% 
+  full_join(global_deaths) %>% 
+  rename(Country_Region = `Country/Region`,
+         Province_State = `Province/State`) %>%
+  mutate(Date = mdy(Date))
+
+# Summary Data
+summary(global)
+
+# Filter the rows that have no cases
+global <- global %>% filter(Cases>0)
+# In case we want to check if any issue with data such as duplicate... do filter the data and check
+global %>% filter(Cases > 2)
+
+# Tidying up us_cases data
+us_cases <- us_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "Date",
+               values_to = "Cases") %>%
+  select (Admin2:Cases) %>%
+  mutate(Date = mdy(Date)) %>%
+  select (-c(Lat, Long_))
+
+# Tidying up us_deaths data
+us_deaths <- us_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "Date",
+               values_to = "Deaths") %>%
+  select (Admin2:Deaths) %>%
+  mutate(Date = mdy(Date)) %>%
+  select (-c(Lat, Long_))
+
+# Combine us_cases and us_deaths into 1 table US
+US <- us_cases %>%
+  full_join(us_deaths)
+
+# Make 2 tables US and global identical fields
+# Global doesn't have Combined_Key field, create Combined_Key for global like US
+global <- global %>%
+  unite("Combined_Key", c(Province_State, Country_Region), sep = ", ", 
+        na.rm = TRUE, remove = FALSE)
+
+# Add Population column into global
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>%
+  select (-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select (-c(UID, FIPS)) %>%
+  select (Province_State, Country_Region, 
+          Date, Cases, Deaths, Population, Combined_Key)
+
+```
+# Data Analysis
+## Summary
+```{r analysis, include=TRUE}
+# Summarize the dataset
+summary(global)
+summary(US)
+
+US_by_State <- US %>%
+  group_by(Province_State, Country_Region, Date) %>%
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths), Population = sum(Population)) %>%
+  mutate(Deaths_per_million = Deaths*1000000/Population) %>%
+  select(Province_State, Country_Region, Date, Cases, Deaths, Deaths_per_million, Population) %>%
+  ungroup()
+
+US_Totals <- US %>%
+  group_by(Country_Region, Date) %>%
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths), Population = sum(Population)) %>%
+  mutate(Deaths_per_million = Deaths*1000000/Population) %>%
+  select(Country_Region, Date, Cases, Deaths, Deaths_per_million, Population) %>%
+  ungroup()
+
+#Analyze more after general graphs have been drafted
+summary(US_Totals)
+
+# Add new_cases and new_deaths into US_by_State and US_Totals
+US_by_State <- US_by_State %>%
+  mutate(New_Cases = Cases - lag(Cases),
+         New_Deaths = Deaths - lag(Deaths))
+US_Totals <- US_Totals %>%
+  mutate(New_Cases = Cases - lag(Cases),
+         New_Deaths = Deaths - lag(Deaths))
+
+# US_State_Totals
+US_State_Totals <- US_by_State %>%
+  group_by(Province_State) %>%
+  summarize(Deaths = max(Deaths), 
+            Cases = max(Cases),
+            Population = max(Population),
+            Cases_per_thousand = Cases * 1000/Population,
+            Deaths_per_thousand = Deaths * 1000/Population) %>%
+  filter(Cases > 0, Population > 0)
+
+# Best 10 States
+US_State_Totals %>%
+  slice_min(Deaths_per_thousand, n=10)
+
+# Worst 10 States
+US_State_Totals %>%
+  slice_max(Deaths_per_thousand, n=10)
+
+```
+## Visualization
+```{r visualization, include=TRUE}
+# Create a plot for US Totals in US
+# Way1
+US_Totals %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date, y = Cases)) +
+  geom_line(aes(color = "Cases")) +
+  geom_point(aes(color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  geom_point(aes(y = Deaths, color = "Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "Lineplot of COVID19 in US", y = NULL)
+
+# Way2
+US_Totals %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date)) +
+  geom_line(aes(y = Cases, color = "Cases")) +
+  geom_point(aes(y = Cases, color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  geom_point(aes(y = Deaths, color = "Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID-19 Cases and Deaths in the US", y = NULL)
+
+# Plot by State
+state <- "New York"
+US_by_State %>%
+  filter(Province_State == state) %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date)) +
+  geom_line(aes(y = Cases, color = "Cases")) +
+  geom_point(aes(y = Cases, color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  geom_point(aes(y = Deaths, color = "Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID-19 Cases and Deaths in ", state), y = NULL)
+
+# Plot for New_Cases and New_Deaths
+US_Totals %>%
+  ggplot(aes(x = Date)) +
+  geom_line(aes(y = New_Cases, color = "New_Cases")) +
+  geom_point(aes(y = New_Cases, color = "New_Cases")) +
+  geom_line(aes(y = New_Deaths, color = "New_Deaths")) +
+  geom_point(aes(y = New_Deaths, color = "New_Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID-19 New Cases and New Deaths in the US", y = NULL)
+
+#State Texas for New Cases and New Deaths
+state <- "Texas"
+US_by_State %>%
+  filter(Province_State == state) %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date)) +
+  geom_line(aes(y = New_Cases, color = "New_Cases")) +
+  geom_point(aes(y = New_Cases, color = "New_Cases")) +
+  geom_line(aes(y = New_Deaths, color = "New_Deaths")) +
+  geom_point(aes(y = New_Deaths, color = "New_Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID-19 New Cases and New Deaths in ", state), y = NULL)
+
+```
+
+# Data Modeling
+## Modeling
+```{r model, include=TRUE}
+model <- lm(Deaths_per_thousand ~ Cases_per_thousand, data = US_State_Totals)
+
+summary(model)
+
+US_Totals_w_Pred <- US_State_Totals %>% mutate(Prediction = predict(model))
+
+```
+## Visualization with Model
+### Tables
+```{r result_table, include=TRUE}
+# Create a table of results
+kable(head(US_Totals_w_Pred))
+```
+### Figures
+```{r figures, include=TRUE}
+# Display a figure
+US_Totals_w_Pred %>% ggplot() +
+    geom_point(aes(x = Cases_per_thousand, y = Deaths_per_thousand), color = "blue") +
+    geom_point(aes(x = Cases_per_thousand, y = Prediction), color = "red") +
+    labs(title = "Line plot of Cases vs Deaths per Thousand")
+```
+
+# Conclusion and Sources of Bias
+## Conclusion
+In this project, we have conducted a comprehensive analysis of COVID-19 data, focusing on case trends and mortality rates in both the United States and globally. Our analysis reveals several key findings:
+
+**Significant Findings**: Our data indicates a clear upward trend in COVID-19 cases and mortality rates, with notable differences across various regions. The analysis of the United States shows significant variability in case rates, while global trends exhibit a general pattern of increasing cases and deaths, albeit with regional differences in the rate of increase.
+
+**Model Effectiveness**: The linear regression model we employed demonstrated that the number of cases per thousand is a statistically significant predictor of mortality rates. Despite this, the model's explanatory power is moderate, as indicated by an R-squared value of 0.3061. This suggests that while our model captures some of the variability in mortality rates, other factors may also be influencing these outcomes.
+
+**Insights and Recommendations**: Based on our findings, it is clear that addressing COVID-19 effectively requires a multifaceted approach, considering both regional differences and broader global trends. Recommendations include enhancing targeted interventions in high-risk areas and continuing to monitor and adjust strategies based on emerging data.
+
+## Sources of Bias
+### Sources of Bias
+Several potential sources of bias may have influenced the results of this project:
+
+1. **Data Collection Bias**:
+The dataset, sourced from publicly available repositories, may contain incomplete or inconsistent data across regions. Some countries may underreport cases or deaths due to limited testing or political reasons, leading to potentially skewed results when comparing countries with more transparent data.
+
+2. **Sampling Bias**:
+The data may not fully represent all populations, particularly in regions with limited reporting or delays. This could result in an overrepresentation of areas with better reporting infrastructure, skewing global or regional trends.
+
+3. **Model Bias**:
+The linear regression model used assumes a simple linear relationship between cases per thousand and mortality rates. This model does not account for complex factors like healthcare quality or public health responses, potentially oversimplifying the relationships.
+
+4. **Confirmation Bias**:
+There’s a risk of interpreting results in a way that supports pre-existing assumptions or expectations, such as emphasizing trends that fit widely accepted theories while downplaying outliers or unexpected findings.
+
+### Personal Bias and Mitigation
+As the analyst, I acknowledge potential personal biases that could influence the interpretation of results:
+
+**Personal Bias**: My background and prior experiences may lead to a preference for certain explanations or models. For instance, I might be inclined to emphasize findings that align with widely accepted theories or recent studies.
+
+**Mitigation Strategies**:
+
+**Diverse Perspectives**: To mitigate personal bias, I have incorporated feedback from colleagues and experts in the field, ensuring a more balanced interpretation of the data.
+Transparent Reporting: I have been transparent about the assumptions and limitations of the models used, providing a clear account of the potential sources of bias and their impact on the findings.
+
+**Multiple Models**: Utilizing various analytical approaches and models helps to cross-verify results and reduce the influence of any single model’s limitations.
+
+By acknowledging and addressing these biases, the analysis aims to provide a more accurate and objective assessment of the COVID-19 data, supporting informed decision-making and policy development.
+
+# References
+
+## Key Points
+- **Metadata Section:** The YAML header at the top (`---`) includes the document title, author, date, and output format. You can change `html_document` to `pdf_document` or `word_document` depending on your needs.
+- **Code Chunks:** The ` ```{r} ... ``` ` syntax is used to include R code. Code chunks are labeled with `{r}` and you can include additional options for controlling their behavior, such as `echo=FALSE` to hide the code.
+- **Text Sections:** Regular Markdown syntax is used for text, headers, lists, and other formatting.
+

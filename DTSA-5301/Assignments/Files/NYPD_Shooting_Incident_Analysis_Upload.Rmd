@@ -1,0 +1,409 @@
+---
+title: "Exploring NYPD Shooting Incident Data: Statistical Insights and Trends"
+author: "Anh Mai"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: default
+  html_document: default
+---
+
+# Introduction and Objectives
+## Introduction
+This project, titled "Exploring NYPD Shooting Incident Data: Statistical Insights and Trends," delves into the dynamics of shooting incidents reported by the New York Police Department (NYPD). By analyzing historical data on these incidents, we aim to uncover underlying patterns, trends, and statistical insights that illuminate the factors influencing shooting incidents in New York City. Our goal is to provide a data-driven understanding of how and when these incidents occur, identify significant trends over time, and explore any correlations with broader socio-economic and environmental factors. This analysis seeks to contribute valuable insights for policymakers, law enforcement agencies, and the community to better address and manage the issue of gun violence.
+
+## Objectives
+
+1. **Analyze Incident Trends Over Time**: Examine the dataset to identify trends in shooting incidents over the years. Determine whether there is an increase or decrease in incidents and highlight any significant changes or patterns.
+
+2. **Investigate Temporal Patterns**: Analyze shooting incidents by time of day, day of the week, and season to identify peak periods for shootings. Determine if certain times or seasons have higher incident rates.
+
+3. **Examine Geographic Distribution**: Map the geographic distribution of shooting incidents across New York City to identify hotspots. Assess whether certain neighborhoods or areas experience higher frequencies of shootings.
+
+4. **Study Demographic Information**: Analyze the demographics of suspects and victims involved in shooting incidents, including age, gender, and ethnicity. Explore any demographic trends or disparities in the data.
+
+5. **Explore Correlations with Socio-Economic Factors**: Investigate potential correlations between shooting incidents and socio-economic factors such as income levels, unemployment rates, and community characteristics to understand broader social influences.
+
+6. **Evaluate Police Response and Outcomes**: Assess the outcomes of shooting incidents, including police response times and resolution status. Evaluate the effectiveness of current policing strategies and interventions.
+
+7. **Provide Recommendations for Policy and Action**: Based on the analysis, develop actionable recommendations for policymakers and law enforcement agencies aimed at reducing shooting incidents and enhancing public safety.
+
+Through this analysis, we seek to enhance understanding of shooting incidents in New York City and support informed decision-making to address and mitigate gun violence in the community.
+
+
+## Data Source
+
+The data for this analysis is sourced from this website
+"https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic"
+Data is CSV file
+"https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+## Scope of Analysis
+
+This analysis will cover:
+The scope of this analysis includes:
+
+1. **Data Range**: The dataset spans from 2006 through the end of the previous calendar year. Analysis will be limited to incidents reported within this time frame.
+
+2. **Data Variables**: Focus will be on variables related to the timing, location, and demographic details of shooting incidents. This includes date, time, location, suspect demographics, and victim demographics.
+
+3. **Geographic Focus**: Analysis will be concentrated on geographic patterns within New York City, with specific emphasis on identifying areas with high frequencies of shooting incidents.
+
+4. **Temporal Analysis**: The study will assess temporal patterns such as time of day, day of the week, and seasonal variations in shooting incidents.
+
+5. **Demographic Analysis**: Examination will include demographic details of suspects and victims to identify any notable trends or disparities.
+
+6. **Socio-Economic Correlations**: The analysis will explore correlations between shooting incidents and socio-economic factors available in the dataset or inferred from external sources.
+
+7. **Exclusions**: This analysis will not cover non-shooting crime incidents, historical context beyond the dataset range, or qualitative aspects not captured in the dataset.
+
+By defining the scope clearly, this analysis aims to provide a focused and comprehensive understanding of shooting incidents in New York City, offering actionable insights while acknowledging the limitations and boundaries of the study.
+
+# Data Wrangling
+
+## Data Loading
+
+```{r setup, include=TRUE}
+# Set CRAN mirror
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+
+# Load necessary libraries
+library(tidyverse)
+library(knitr)
+library(dplyr)
+library(lubridate)
+library(forecast)
+library(sf)
+
+# Set global options
+opts_chunk$set(echo = TRUE)
+
+# Load your dataset
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+# Read data/load data into tables
+raw_incidents <- read_csv(url_in[1])
+
+```
+## Data Cleanup
+```{r cleanup, include=TRUE}
+# Display the first few rows of the dataset
+head(raw_incidents)
+
+summary(raw_incidents)
+
+# Load data into INCIDENTS
+incidents <- raw_incidents %>%
+  rename(BOROUGH = `BORO`) %>%
+  select (INCIDENT_KEY:VIC_RACE)
+
+# Convert Date column to Date type
+incidents$OCCUR_DATE <- mdy(incidents$OCCUR_DATE)
+
+# Combine the date and time columns into one datetime column
+incidents$OCCUR_DATETIME <- paste(incidents$OCCUR_DATE, incidents$OCCUR_TIME)
+
+# Convert the new datetime column to POSIXct
+incidents$OCCUR_DATETIME <- as.POSIXct(incidents$OCCUR_DATETIME, format = "%Y-%m-%d %H:%M:%S")
+
+# Remove duplicates
+incidents <- distinct(incidents)
+
+#Verify OCCUR_DATE
+str(incidents$OCCUR_DATE)
+class(incidents$OCCUR_DATE)
+
+# Add code for borough into incidents_by_borough
+
+# Create a lookup table for borough codes and names
+borough_lookup <- data.frame(
+  Borough_Code = c(1, 2, 3, 4, 5),
+  Borough = c("Manhattan", "Bronx", "Brooklyn", "Queens", "Staten Island")
+)
+
+
+```
+# Data Analysis
+## Summary
+```{r analysis, include=TRUE}
+# Summarize the dataset
+summary(incidents)
+
+# Trend Analysis
+incidents_by_month <- incidents %>%
+  group_by(Month = floor_date(OCCUR_DATE, unit = "month")) %>%
+  summarize(Incident_Count = n()) %>%
+  ungroup()
+
+# Temporal Patterns
+# Time of Day
+incidents_by_time_of_day <- incidents %>%
+  mutate(Hour = hour(OCCUR_DATETIME)) %>%  
+  mutate(Time_of_Day = case_when(
+    Hour >= 5 & Hour < 12 ~ "Morning",
+    Hour >= 12 & Hour < 17 ~ "Afternoon",
+    Hour >= 17 & Hour < 21 ~ "Evening",
+    TRUE ~ "Night"  # Covers from 21:00 to 04:59
+  )) %>%
+  group_by(Time_of_Day) %>%
+  summarize(Incident_Count = n()) %>%
+  ungroup()
+
+# Incidents by Hour
+incidents_by_hour <- incidents %>%
+  group_by(Hour = hour(OCCUR_DATETIME)) %>%
+  summarize(Incident_Count = n()) %>%
+  ungroup() %>%
+  arrange(desc(Incident_Count))
+
+# Geographic Analysis
+# Incidents by Borough
+incidents_by_borough <- incidents %>%
+  group_by(BOROUGH) %>%
+  summarize(Incident_Count = n()) %>%
+  ungroup() %>%
+  arrange(desc(Incident_Count)) %>%
+  mutate(Percentage = Incident_Count / sum(Incident_Count) * 100)
+
+incidents_by_borough$BOROUGH <- str_to_title(incidents_by_borough$BOROUGH)
+
+incidents_by_borough <- inner_join(incidents_by_borough, borough_lookup, by = c("BOROUGH" = "Borough"))
+
+incidents_by_borough <- incidents_by_borough %>% select (Borough_Code, everything())
+
+# Pattern Analysis
+# Incidents by Time of Day and Murder Flag
+incidents_by_time_murder <- incidents %>%
+  mutate(Hour = hour(OCCUR_DATETIME)) %>%  # Extract hour from OCCUR_DATETIME
+  mutate(Time_of_Day = case_when(
+    Hour >= 5 & Hour < 12 ~ "Morning",
+    Hour >= 12 & Hour < 17 ~ "Afternoon",
+    Hour >= 17 & Hour < 21 ~ "Evening",
+    TRUE ~ "Night"  # Covers from 21:00 to 04:59
+  )) %>%
+  group_by(Time_of_Day, STATISTICAL_MURDER_FLAG) %>%
+  summarize(Incident_Count = n(), .groups = 'drop')   %>%
+  rename (Murder_Flag = `STATISTICAL_MURDER_FLAG`)
+
+```
+
+## Visualization
+```{r visualization, include=TRUE}
+# Plot: Incidents by Month
+incidents_by_month %>%
+  ggplot(aes(x = Month)) +
+  geom_line(aes(y = Incident_Count, color = "Incidents")) +
+  geom_point(aes(y = Incident_Count, color = "Incidents")) +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45)) +
+  labs(title = "NYPD Shooting Incidents by Month", y = "Incidents")
+
+# Plot: Incidents by Time of Day
+incidents_by_time_of_day %>%
+  ggplot(aes(x = Time_of_Day, y = Incident_Count, fill = Time_of_Day)) +  # Use fill to color bars by Time_of_Day
+  geom_col() +  # Use geom_col() for a column chart
+  theme(legend.position = "none",  # Remove the legend since fill is same as x-axis
+        axis.text.x = element_text(angle = 45, hjust = 1)) +  # Adjust text angle
+  labs(title = "NYPD Shooting Incidents by Time of Day",
+       x = "Time of Day",  # Add x-axis label
+       y = "Incident Count")  # Correct y-axis label
+
+# Plot: Incidents by Time of Day and Murder Flag
+# Create a stacked bar chart
+ggplot(incidents_by_time_murder, aes(x = Time_of_Day, y = Incident_Count, fill = Murder_Flag)) +
+  geom_bar(stat = "identity") +  # Use identity to stack bars according to Incident_Count
+  theme_minimal() +  # Use a minimal theme for a clean look
+  labs(title = "NYPD Shooting Incidents by Time of Day and Murder Flag",
+       x = "Time of Day",
+       y = "Incident Count",
+       fill = "Murder Flag")  # Label the fill legend
+
+# Plot: Incident Hotspot in New York map
+# Load New York City borough shapefile
+nyc_boroughs <- st_read("https://raw.githubusercontent.com/anhpmai/CU_MSDS/main/DTSA-5301/Assignments/Data/new-york-city-boroughs.geojson")
+
+# Merge incidents data with borough shapefile
+nyc_boroughs <- nyc_boroughs %>%
+  left_join(incidents_by_borough, by = c("name" = "BOROUGH"))
+
+# Create the hotspot map
+ggplot(data = nyc_boroughs) +
+  geom_sf(aes(fill = Incident_Count)) +
+  geom_sf_text(aes(label = name), size = 3, color = "black") +
+  scale_fill_gradient(low = "lightblue", high = "red", na.value = "white") +
+  theme_minimal() +
+  labs(title = "Hotspot Map of NYPD Shooting Incidents by Borough",
+       fill = "Incident Count")
+
+
+```
+
+# Data Modeling
+## Modeling
+```{r model, include=TRUE}
+# Using ARIMA model to predict future shooting incidents based on historical data
+
+# Example of aggregating data by month
+monthly_incidents <- incidents %>%
+  mutate(Month = floor_date(OCCUR_DATETIME, "month")) %>%
+  group_by(Month) %>%
+  summarize(Incident_Count = n()) %>%
+  ungroup()
+
+# Convert to a time series object
+incident_ts <- ts(monthly_incidents$Incident_Count, start = c(year(min(monthly_incidents$Month)), month(min(monthly_incidents$Month))), frequency = 12)
+
+# Fit the ARIMA model
+fit <- auto.arima(incident_ts)
+
+# Forecast future incidents
+forecasted_incidents <- forecast(fit, h = 12)
+```
+## Model Visualization
+```{r model_vis, include=TRUE}
+# Plot the forecast
+plot(forecasted_incidents, main = "Forecast of Future Incidents")
+
+# Check residuals
+checkresiduals(fit)
+```
+
+# Alternative Modeling
+```{r alt_model, include=TRUE}
+# Try fitting an ARIMA model with different parameters
+fit_alternative <- auto.arima(incident_ts, seasonal = TRUE, stepwise = FALSE, approximation = FALSE)
+
+# Forecast future incidents
+forecasted_incidents_alt <- forecast(fit_alternative, h = 12)
+```
+## Model Visualization
+```{r model_vis_02, include=TRUE}
+# Plot the forecast
+plot(forecasted_incidents_alt, main = "Forecast of Future Incidents with Alternative Model")
+
+# Check the residuals of the new model
+checkresiduals(fit_alternative)
+
+```
+# Results
+## Tables and Figures
+```{r result01, include=TRUE}
+# Create a table of results
+kable(head(incidents_by_month))
+# Incidents by Month
+incidents_by_month %>%
+  ggplot(aes(x = Month)) +
+  geom_line(aes(y = Incident_Count, color = "Incidents")) +
+  geom_point(aes(y = Incident_Count, color = "Incidents")) +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45)) +
+  labs(title = "NYPD Shooting Incidents by Month", y = "Incidents")
+```
+```{r result02, include=TRUE}
+kable(head(incidents_by_time_murder))
+
+# Incidents by Time of Day and Murder Flag
+ggplot(incidents_by_time_murder, aes(x = Time_of_Day, y = Incident_Count, fill = Murder_Flag)) +
+  geom_bar(stat = "identity") +  
+  theme_minimal() +  
+  labs(title = "NYPD Shooting Incidents by Time of Day and Murder Flag",
+       x = "Time of Day",
+       y = "Incident Count",
+       fill = "Murder Flag")  
+```
+```{r result03, include=TRUE}
+kable(head(incidents_by_borough), caption = "Incidents by Borough")
+
+# Incidents by Borough
+ggplot(data = nyc_boroughs) +
+  geom_sf(aes(fill = Incident_Count)) +
+  geom_sf_text(aes(label = name), size = 3, color = "black") +
+  scale_fill_gradient(low = "lightblue", high = "red", na.value = "white") +
+  theme_minimal() +
+  labs(title = "Hotspot Map of NYPD Shooting Incidents by Borough",
+       fill = "Incident Count")
+```
+```{r result04, include=TRUE}
+# Prepare the forecast data for display on FIT
+# Extracting the start date and frequency from the time series object
+
+# Display the table using kable
+kable(forecasted_incidents, caption = "ARIMA Forecast Results", col.names = c("Month", "Forecast", "Lower 80%", "Upper 80%", "Lower 95%", "Upper 95%"))
+
+# Plot the forecast
+plot(forecasted_incidents, main = "Forecast of Future Incidents")
+
+# Check residuals
+checkresiduals(fit)
+
+```
+
+# Conclusion and Bias
+In this analysis of the NYPD Shooting Incidents data, several key aspects were examined, including the distribution of incidents over time, by borough, and by time of day, along with the relevance of the Murder Flag. The following analyses were conducted:
+
+1. **Incidents by Month:**
+    The analysis revealed that the highest number of incidents occurred in the summer months, particularly in June, July, and August of 2020. This period showed a significant spike in incidents, suggesting a potential seasonal trend.
+
+2. **Incidents by Borough:**  
+    Brooklyn emerged as the borough with the highest number of incidents, followed by the Bronx. In contrast, Staten Island recorded the lowest number of incidents. These findings highlight geographic disparities in the occurrence of shooting incidents across New York City.
+
+3. **Incidents by Time of Day and Murder Flag:**
+    The data showed that incidents are most frequent at night, with evening being the second most common time of day for shootings. Despite the high number of incidents during these times, none were marked with the "Murder" flag. This indicates that the Murder Flag is not significantly related to the overall incident count and may not be a critical factor in understanding the frequency of shooting incidents.
+    
+## Findings
+  **Seasonal Peak**: 
+    The highest number of incidents occurred in June, July, and August of 2020.
+
+  **Geographic Disparities**: 
+    Brooklyn had the highest incident count, followed by the Bronx, while Staten Island had the lowest.
+
+  **Time of Day Influence**: 
+    Nighttime had the highest incident count, followed by evening, but these incidents were not associated with the "Murder" flag, indicating that this flag is not a relevant predictor for incident frequency.
+
+## Predictive Modeling
+The ARIMA model was selected and applied to the time series data to forecast future incidents. This model was found to be useful for predicting trends based on historical data, making it a valuable tool for anticipating and potentially mitigating future incidents.
+
+### ARIMA charts:
+
+**The residuals plot** shows that most of the data has been well modeled, but there are some spikes around 2020, which could be anomalies.
+**The ACF plot** and **Ljung-Box test** both indicate remaining autocorrelations, particularly at lag 12 and lag 24, suggesting the model could be improved by adding additional terms or adjusting for seasonality more explicitly.
+**The residuals histogram** shows a normal distribution, supporting the model's validity overall, though the presence of outliers suggests that certain extreme events are not fully captured by the model.
+
+### Further Model Improvements:
+**Investigate the significance of lag 12 and lag 24**: This could involve refining the seasonal or trend components in the ARIMA model.
+**Consider additional model terms**: Adding more autoregressive (AR) or moving average (MA) components could help capture the remaining autocorrelation.
+**Address outliers**: The outliers in the residuals could represent significant external events (e.g., the pandemic), and it may be worth exploring whether certain time periods need to be handled separately.
+
+
+## Conclusion
+The analysis provides insights into the temporal, geographic, and situational characteristics of shooting incidents in New York City. The ARIMA model, in particular, offers a robust method for forecasting future incidents, which could be crucial for law enforcement and policy-making decisions aimed at reducing shooting incidents. The data highlights the need for targeted interventions in specific boroughs and times of day, while also suggesting that the Murder Flag may not be a critical factor in understanding or predicting overall incident counts.
+
+## Sources of Bias
+Several potential sources of bias may have influenced the results of this project:
+
+**Reporting Bias**:
+- Underreporting or Overreporting: Not all shooting incidents may be reported or recorded accurately by law enforcement, leading to underreporting. Conversely, certain types of incidents might be more rigorously reported, leading to overrepresentation in the data.
+- Discretionary Reporting: Police officers may exercise discretion in reporting incidents, which could vary by borough, time of day, or other factors, leading to inconsistencies.
+
+**Geographic Bias**:
+- Resource Allocation: Differences in police presence and resources across boroughs could influence the number of reported incidents. Boroughs with higher police presence might have more incidents recorded simply due to greater surveillance.
+- Population Density: Higher population densities in certain boroughs might naturally lead to more incidents, not necessarily because they are more dangerous but because more people live and interact in those areas.
+
+**Temporal Bias**:
+- Seasonal Trends: The data shows a spike in incidents during the summer months, which could be influenced by factors such as weather, public events, or seasonal activities, rather than underlying trends in violence.
+- Year-Specific Anomalies: The year 2020 was marked by unique social, economic, and political factors (e.g., the COVID-19 pandemic, social unrest) that may have influenced crime rates. These factors might not be present in other years, limiting the generalizability of the findings.
+
+**Data Quality and Completeness**:
+- Missing Data: Incomplete or missing data points can bias the analysis, especially if the missing data is not randomly distributed across the dataset.
+- Data Entry Errors: Mistakes in data entry or inconsistencies in how data is recorded can introduce bias into the analysis.
+
+**Temporal Scope Bias**:
+- Short-Term Data: Analyzing data from only a specific year or short period might lead to conclusions that are not applicable over longer time frames, potentially missing longer-term trends or cyclical patterns.
+
+## Mitigating Bias
+To mitigate these biases, it is crucial to:
+- Use multiple years of data to capture broader trends.
+- Cross-validate findings with different data sources or models.
+- Consider socioeconomic and demographic factors when interpreting results.
+- Be transparent about the limitations of the analysis and the potential impact of biases on the conclusions.
+
+End of document.
+
+-------------------------------------------------------
